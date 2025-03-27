@@ -1,4 +1,4 @@
-const backendUrl = 'https://youtube-recommender-backend.onrender.com'; // Replace with your Render URL
+const backendUrl = 'https://youtubercd.onrender.com'; // Replace with your Render URL
 const VIDEOS_PER_LOAD = 2;
 let allVideos = { short: [], long: [] };
 let currentTab = 'short';
