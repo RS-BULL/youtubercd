@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import re
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["https://rs-bull.github.io"])  # Allow only this origin
 
 # Headers to mimic a browser
 headers = {
