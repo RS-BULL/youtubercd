@@ -142,27 +142,12 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         allVideos.short = videos.filter(video => video.duration < 10 * 60 && video.duration > 0);
         allVideos.long = videos.filter(video => video.duration >= 10 * 60);
 
-        // Step 3: Display results with tabs and filters
+        // Step 3: Display results with tabs
         let shortTermIndex = 0;
         let longTermIndex = 0;
 
         resultDiv.innerHTML = `
             <p class="analyzed-count">Analyzed ${videos.length} videos to find the best for you</p>
-            <div class="filters">
-                <label>Upload Date: 
-                    <select id="upload-filter">
-                        <option value="last_6_months">Last 6 Months</option>
-                        <option value="before_6_months">Before 6 Months</option>
-                        <option value="all">All Time</option>
-                    </select>
-                </label>
-                <label>Sort By: 
-                    <select id="sort-filter">
-                        <option value="most_viewed">Most Viewed</option>
-                        <option value="most_liked">Most Liked</option>
-                    </select>
-                </label>
-            </div>
             <div class="tabs">
                 <button class="tab active" data-tab="short">Quick Watches</button>
                 <button class="tab" data-tab="long">In-Depth Videos</button>
