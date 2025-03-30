@@ -119,7 +119,7 @@ function displayVideos(category, videos, index) {
 }
 
 // Handle form submission
-document.getElementById('searchForm').addEvent OBSOLETEListener('submit', async (e) => {
+document.getElementById('searchForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const query = document.getElementById('query').value.trim();
     if (!query) return;
