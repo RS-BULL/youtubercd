@@ -8,10 +8,15 @@ from datetime import datetime, timedelta
 import re
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import os
+import logging
 
 app = Flask(__name__)
-# Explicitly allow CORS for your GitHub Pages origin
-CORS(app, resources={r"/search": {"origins": "https://rs-bull.github.io"}})
+# Allow CORS from your GitHub Pages origin (and temporarily all for debugging)
+CORS(app, resources={r"/search": {"origins": ["https://rs-bull.github.io", "*"]}})
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Headers to mimic a browser
 headers = {
@@ -112,7 +117,8 @@ def get_comments_and_sentiment(video_id):
         total = positive + negative
         sentiment_ratio = positive / total if total > 0 else 0
         return sentiment_ratio
-    except:
+    except Exception as e:
+        logger.error(f"Error in get_comments_and_sentiment: {str(e)}")
         return 0.5
 
 # Search videos via web scraping
@@ -123,20 +129,25 @@ def search_videos():
     sort_by = request.args.get('sortBy', 'most_viewed')
 
     if not query:
+        logger.warning("No query provided")
         return jsonify({'error': 'Query parameter is required'}), 400
 
     cache_key = f"{query}_{upload_filter}_{sort_by}"
     if cache_key in cache:
+        logger.info(f"Returning cached result for {cache_key}")
         return jsonify(cache[cache_key])
 
     try:
+        logger.info(f"Fetching YouTube results for query: {query}")
         url = f"https://www.youtube.com/results?search_query={query}"
         response = requests.get(url, headers=headers)
         if not response.ok:
+            logger.error(f"Failed to fetch YouTube search results: {response.status_code}")
             return jsonify({'error': 'Failed to fetch YouTube search results'}), 502
 
         data = extract_yt_initial_data(response.text)
         if not data:
+            logger.error("Unable to parse ytInitialData")
             return jsonify({'error': 'Unable to parse video data from YouTube'}), 500
 
         contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
@@ -223,9 +234,13 @@ def search_videos():
         if len(cache) > 100:
             cache.pop(next(iter(cache)))
 
+        logger.info(f"Successfully processed {len(video_list)} videos for query: {query}")
         return jsonify(video_list)
     except Exception as e:
+        logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"Starting Flask app on port {port}")
+    app.run(host='0.0.0.0', port=port)
