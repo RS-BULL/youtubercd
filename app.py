@@ -3,10 +3,8 @@ from flask_cors import CORS
 from bs4 import BeautifulSoup
 import requests
 import json
-from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
 import re
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import os
 import logging
 
@@ -69,7 +67,7 @@ def parse_views(view_text):
     view_text = view_text.replace(',', '').replace(' views', '')
     if 'K' in view_text:
         return int(float(view_text.replace('K', '')) * 1000)
-    elif unit == 'M':
+    elif 'M' in view_text:
         return int(float(view_text.replace('M', '')) * 1000000)
     return int(view_text)
 
@@ -117,8 +115,8 @@ def search_videos():
         videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
         video_list = []
 
-        # Limit to 10 videos to avoid timeout
-        for video in videos[:10]:
+        # Limit to 50 videos to avoid timeout
+        for video in videos[:50]:
             if 'videoRenderer' not in video:
                 continue
             video_data = video['videoRenderer']
@@ -171,11 +169,10 @@ def search_videos():
                 'description': description,
                 'views': views,
                 'likes': likes,
-                'transcript': None,  # Skipped for now
                 'score': (views * 0.000001),  # Simplified score
                 'upload_date': upload_date.strftime('%Y-%m-%d')
             })
-            if len(video_list) >= 5:  # Further limit to 5 results
+            if len(video_list) >= 5:  # Limit to 5 results for display
                 break
 
         if sort_by == 'most_viewed':
