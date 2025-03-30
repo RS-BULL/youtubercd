@@ -1,4 +1,4 @@
-const backendUrl = 'https://youtubercd.onrender.com'; // Updated to your Render URL
+const backendUrl = 'https://youtubercd.onrender.com';
 const VIDEOS_PER_LOAD = 2;
 let allVideos = { short: [], long: [] };
 let currentTab = 'short';
@@ -44,9 +44,9 @@ searchInput.addEventListener('blur', () => {
     }, 200);
 });
 
-// Parse duration (e.g., "8:45" or "45" to minutes)
+// Parse duration (e.g., seconds to "mm:ss")
 function parseDuration(seconds) {
-    if (!seconds) return 0;
+    if (!seconds) return "0:00";
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
@@ -81,8 +81,6 @@ function formatNumber(num) {
 // Filter videos based on user selection
 function filterVideos(videos, uploadFilter, sortFilter) {
     let filteredVideos = [...videos];
-    
-    // Filter by upload date (already handled on backend)
     
     // Sort by criteria
     if (sortFilter === 'most_viewed') {
@@ -131,18 +129,18 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     saveSearchHistory(query);
 
     try {
-        // Step 1: Search for videos (includes details and transcripts)
-        const uploadFilter = document.getElementById('upload-filter').value;
-        const sortFilter = document.getElementById('sort-filter').value;
+        // Use default values if filters are not selected
+        const uploadFilter = document.getElementById('upload-filter').value || 'all';
+        const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
         const response = await fetch(`${backendUrl}/search?query=${encodeURIComponent(query)}&uploadDate=${uploadFilter}&sortBy=${sortFilter}`);
         const videos = await response.json();
         if (!response.ok) throw new Error(videos.error || 'Error fetching videos');
 
-        // Step 2: Categorize videos by duration
+        // Categorize videos by duration
         allVideos.short = videos.filter(video => video.duration < 10 * 60 && video.duration > 0);
         allVideos.long = videos.filter(video => video.duration >= 10 * 60);
 
-        // Step 3: Display results with tabs
+        // Display results with tabs
         let shortTermIndex = 0;
         let longTermIndex = 0;
 
@@ -165,8 +163,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                 document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
                 currentTab = tab.dataset.tab;
-                const uploadFilter = document.getElementById('upload-filter').value;
-                const sortFilter = document.getElementById('sort-filter').value;
+                const uploadFilter = document.getElementById('upload-filter').value || 'all';
+                const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
                 const filteredVideos = filterVideos(allVideos[currentTab], uploadFilter, sortFilter);
                 document.getElementById('video-grid').innerHTML = '';
                 if (currentTab === 'short') {
@@ -179,8 +177,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
         // Filter changes
         document.getElementById('upload-filter').addEventListener('change', () => {
-            const uploadFilter = document.getElementById('upload-filter').value;
-            const sortFilter = document.getElementById('sort-filter').value;
+            const uploadFilter = document.getElementById('upload-filter').value || 'all';
+            const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
             const filteredVideos = filterVideos(allVideos[currentTab], uploadFilter, sortFilter);
             document.getElementById('video-grid').innerHTML = '';
             if (currentTab === 'short') {
@@ -191,8 +189,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         });
 
         document.getElementById('sort-filter').addEventListener('change', () => {
-            const uploadFilter = document.getElementById('upload-filter').value;
-            const sortFilter = document.getElementById('sort-filter').value;
+            const uploadFilter = document.getElementById('upload-filter').value || 'all';
+            const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
             const filteredVideos = filterVideos(allVideos[currentTab], uploadFilter, sortFilter);
             document.getElementById('video-grid').innerHTML = '';
             if (currentTab === 'short') {
@@ -204,8 +202,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
         // Load more
         document.getElementById('load-more').addEventListener('click', () => {
-            const uploadFilter = document.getElementById('upload-filter').value;
-            const sortFilter = document.getElementById('sort-filter').value;
+            const uploadFilter = document.getElementById('upload-filter').value || 'all';
+            const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
             const filteredVideos = filterVideos(allVideos[currentTab], uploadFilter, sortFilter);
             if (currentTab === 'short') {
                 shortTermIndex = displayVideos('short', filteredVideos, shortTermIndex);
