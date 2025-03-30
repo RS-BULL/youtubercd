@@ -5,10 +5,11 @@ import requests
 import json
 from datetime import datetime, timedelta
 import re
-from youtube_transcript_api import YouTubeTranscriptApi
-from textblob import TextBlob
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import os
 import logging
+import asyncio
+import aiohttp
 
 app = Flask(__name__)
 CORS(app, resources={r"/search": {"origins": ["https://rs-bull.github.io", "*"]}})
@@ -22,6 +23,7 @@ headers = {
 }
 
 cache = {}
+analyzer = SentimentIntensityAnalyzer()
 
 def extract_yt_initial_data(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -40,8 +42,21 @@ def parse_relative_time(time_str):
     if not match:
         return now
     value, unit = int(match.group(1)), match.group(2)
-    deltas = {'year': 365, 'month': 30, 'week': 7, 'day': 1, 'hour': 1/24, 'minute': 1/1440, 'second': 1/86400}
-    return now - timedelta(days=value * deltas[unit])
+    if unit == 'year':
+        return now - timedelta(days=value * 365)
+    elif unit == 'month':
+        return now - timedelta(days=value * 30)
+    elif unit == 'week':
+        return now - timedelta(weeks=value)
+    elif unit == 'day':
+        return now - timedelta(days=value)
+    elif unit == 'hour':
+        return now - timedelta(hours=value)
+    elif unit == 'minute':
+        return now - timedelta(minutes=value)
+    elif unit == 'second':
+        return now - timedelta(seconds=value)
+    return now
 
 def parse_views(view_text):
     if not view_text or view_text == 'Unknown':
@@ -63,157 +78,152 @@ def parse_duration(duration_text):
         return int(parts[0]) * 60 + int(parts[1])
     return 0
 
-def get_comments_sentiment(video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    try:
-        response = session.get(url, headers=headers, timeout=5)
-        if not response.ok:
-            return 0, 0
-        data = extract_yt_initial_data(response.text)
-        if not data:
-            return 0, 0
-        # Simulating comment fetching (actual comment scraping requires API or more complex logic)
-        positive, negative = 0, 0
-        for _ in range(25):
-            sentiment = TextBlob("Sample comment text").sentiment.polarity
-            if sentiment > 0:
-                positive += 1
-            elif sentiment < 0:
-                negative += 1
-        return positive, negative
-    except Exception:
-        return 0, 0
+async def fetch_page(session, url):
+    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+        if response.status == 200:
+            return await response.text()
+        return None
 
-def check_transcript(video_id, query):
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        total_length = sum(item['duration'] for item in transcript)
-        sample_length = total_length * 0.25
-        current_length = 0
-        sample_text = ""
-        for item in transcript:
-            sample_text += item['text'] + " "
-            current_length += item['duration']
-            if current_length >= sample_length:
-                break
-        query_words = set(query.lower().split())
-        transcript_words = set(sample_text.lower().split())
-        return len(query_words.intersection(transcript_words)) > 0
-    except Exception:
-        return False
+async def get_comments(video_id):
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    async with aiohttp.ClientSession() as session:
+        html = await fetch_page(session, url)
+        if not html:
+            return []
+        data = extract_yt_initial_data(html)
+        if not data:
+            return []
+        try:
+            # Placeholder: Actual comment fetching requires YouTube API or deeper scraping
+            # Simulate fetching top 25 comments
+            return [f"Sample comment {i}" for i in range(25)]
+        except (KeyError, IndexError):
+            return []
+
+def analyze_sentiment(comments):
+    if not comments:
+        return 0
+    positive = 0
+    for comment in comments[:25]:
+        score = analyzer.polarity_scores(comment)
+        if score['compound'] > 0.05:
+            positive += 1
+    return positive / min(len(comments), 25)
+
+def check_content_match(query, title, description):
+    query_terms = set(query.lower().split())
+    title_lower = title.lower()
+    description_lower = description.lower()
+    match_score = sum(1 for term in query_terms if term in title_lower or term in description_lower)
+    return match_score / len(query_terms) if query_terms else 0
+
+async def process_video(video, query):
+    video_data = video.get('videoRenderer', {})
+    video_id = video_data.get('videoId')
+    title = video_data.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown')
+    thumbnail = video_data.get('thumbnail', {}).get('thumbnails', [{}])[0].get('url', '')
+    duration = video_data.get('lengthText', {}).get('simpleText', '0:00')
+    channel = video_data.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
+    published = video_data.get('publishedTimeText', {}).get('simpleText', 'Unknown')
+    description = video_data.get('detailedMetadataSnippets', [{}])[0].get('snippetText', {}).get('runs', [{}])[0].get('text', '')
+
+    content_match = check_content_match(query, title, description)
+    if content_match < 0.5:
+        return None
+
+    async with aiohttp.ClientSession() as session:
+        video_html = await fetch_page(session, f"https://www.youtube.com/watch?v={video_id}")
+        views = 0
+        likes = 0
+        if video_html:
+            video_data = extract_yt_initial_data(video_html)
+            if video_data:
+                try:
+                    video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
+                    views_text = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
+                    views = parse_views(views_text)
+                    likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
+                    likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', '')) if likes_data else 0
+                except (KeyError, IndexError):
+                    pass
+
+    if views == 0 or likes == 0:
+        return None
+
+    views_to_likes_ratio = likes / views if views > 0 else 0
+    comments = await get_comments(video_id)
+    sentiment_ratio = analyze_sentiment(comments)
+
+    score = (content_match * 5) + (views * 0.000001) + (likes * 0.001) + (views_to_likes_ratio * 10) + (sentiment_ratio * 5)
+    duration_seconds = parse_duration(duration)
+    upload_date = parse_relative_time(published)
+
+    return {
+        'id': video_id,
+        'title': title,
+        'thumbnail': thumbnail,
+        'duration': duration_seconds,
+        'channel': channel,
+        'published': published,
+        'description': description,
+        'views': views,
+        'likes': likes,
+        'score': score,
+        'upload_date': upload_date.strftime('%Y-%m-%d')
+    }
 
 @app.route('/search', methods=['GET'])
-def search_videos():
+async def search_videos():
     query = request.args.get('query')
     upload_filter = request.args.get('uploadDate', 'all')
     sort_by = request.args.get('sortBy', 'most_viewed')
 
     if not query:
+        logger.warning("No query provided")
         return jsonify({'error': 'Query parameter is required'}), 400
 
     cache_key = f"{query}_{upload_filter}_{sort_by}"
     if cache_key in cache:
+        logger.info(f"Returning cached result for {cache_key}")
         return jsonify(cache[cache_key])
 
     try:
-        url = f"https://www.youtube.com/results?search_query={query}"
-        response = session.get(url, headers=headers, timeout=10)
-        if not response.ok:
-            return jsonify({'error': 'Failed to fetch YouTube search results'}), 502
+        logger.info(f"Fetching YouTube results for query: {query}")
+        async with aiohttp.ClientSession() as session:
+            html = await fetch_page(session, f"https://www.youtube.com/results?search_query={query}")
+            if not html:
+                logger.error("Failed to fetch YouTube search results")
+                return jsonify({'error': 'Failed to fetch YouTube search results'}), 502
 
-        data = extract_yt_initial_data(response.text)
-        if not data:
-            return jsonify({'error': 'Unable to parse video data'}), 500
+            data = extract_yt_initial_data(html)
+            if not data:
+                logger.error("Unable to parse ytInitialData")
+                return jsonify({'error': 'Unable to parse video data from YouTube'}), 500
 
-        contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
-        videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
-        video_list = []
+            contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
+            videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
 
-        for video in videos[:50]:
-            if 'videoRenderer' not in video:
-                continue
-            video_data = video['videoRenderer']
-            video_id = video_data.get('videoId')
-            title = video_data.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown')
-            thumbnail = video_data.get('thumbnail', {}).get('thumbnails', [{}])[0].get('url', '')
-            duration = video_data.get('lengthText', {}).get('simpleText', '0:00')
-            channel = video_data.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
-            published = video_data.get('publishedTimeText', {}).get('simpleText', 'Unknown')
-            description = video_data.get('detailedMetadataSnippets', [{}])[0].get('snippetText', {}).get('runs', [{}])[0].get('text', '')
-
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            video_response = session.get(video_url, headers=headers, timeout=5)
-            views, likes = 0, 0
-            if video_response.ok:
-                video_data = extract_yt_initial_data(video_response.text)
-                if video_data:
-                    try:
-                        video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
-                        views = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
-                        likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
-                        likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', ''))
-                    except (KeyError, IndexError):
-                        pass
-
-            views = parse_views(views)
-            duration_seconds = parse_duration(duration)
-            upload_date = parse_relative_time(published)
+            tasks = [process_video(video, query) for video in videos[:50]]
+            video_list = [v for v in await asyncio.gather(*tasks) if v]
 
             six_months_ago = datetime.now() - timedelta(days=180)
-            is_short_term = upload_date >= six_months_ago
-            if upload_filter == 'last_6_months' and not is_short_term:
-                continue
-            elif upload_filter == 'before_6_months' and is_short_term:
-                continue
+            if upload_filter == 'last_6_months':
+                video_list = [v for v in video_list if datetime.strptime(v['upload_date'], '%Y-%m-%d') >= six_months_ago]
+            elif upload_filter == 'before_6_months':
+                video_list = [v for v in video_list if datetime.strptime(v['upload_date'], '%Y-%m-%d') < six_months_ago]
 
-            title_match = any(word in title.lower() for word in query.lower().split())
-            description_match = any(word in description.lower() for word in query.lower().split())
-            if not (title_match or description_match):
-                continue
+            video_list.sort(key=lambda x: x['score'], reverse=True)
+            cache[cache_key] = video_list[:10]
+            if len(cache) > 100:
+                cache.pop(next(iter(cache)))
 
-            transcript_match = check_transcript(video_id, query)
-            if not transcript_match:
-                continue
-
-            positive_comments, negative_comments = get_comments_sentiment(video_id)
-            sentiment_ratio = positive_comments / (negative_comments + 1)
-            views_to_likes = likes / (views + 1)
-
-            score = (views * 0.000001) + (likes * 0.0001) + (views_to_likes * 10) + (sentiment_ratio * 5)
-
-            video_list.append({
-                'id': video_id,
-                'title': title,
-                'thumbnail': thumbnail,
-                'duration': duration_seconds,
-                'channel': channel,
-                'published': published,
-                'description': description,
-                'views': views,
-                'likes': likes,
-                'score': score,
-                'upload_date': upload_date.strftime('%Y-%m-%d'),
-                'is_short_term': is_short_term
-            })
-
-        video_list.sort(key=lambda x: x['score'], reverse=True)
-        if sort_by == 'most_viewed':
-            video_list.sort(key=lambda x: x['views'], reverse=True)
-        elif sort_by == 'most_liked':
-            video_list.sort(key=lambda x: x['likes'], reverse=True)
-
-        short_term = [v for v in video_list if v['is_short_term']]
-        long_term = [v for v in video_list if not v['is_short_term']]
-        result = {'short': short_term[:5], 'long': long_term[:5], 'all': video_list}
-        cache[cache_key] = result
-        if len(cache) > 100:
-            cache.pop(next(iter(cache)))
-
-        return jsonify(result)
+            logger.info(f"Successfully processed {len(video_list)} videos for query: {query}")
+            return jsonify(video_list[:10])
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
+    logger.info(f"Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port)
