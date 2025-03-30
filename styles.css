@@ -375,3 +375,23 @@ button:active {
         font-size: 0.9rem;
     }
 }
+.video-thumbnail {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+}
+.tab {
+    padding: 10px;
+    cursor: pointer;
+}
+.tab.active {
+    background-color: #ddd;
+}
+.video-grid {
+    display: grid;
+    gap: 20px;
+}
+.load-more {
+    margin-top: 20px;
+    padding: 10px;
+}
