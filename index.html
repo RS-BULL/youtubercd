@@ -19,6 +19,21 @@
             <button type="submit"><i class="fas fa-search"></i> Search</button>
         </form>
         <div id="search-history" class="search-history"></div>
+        <div class="filters">
+            <label>Upload Date: 
+                <select id="upload-filter">
+                    <option value="last_6_months">Last 6 Months</option>
+                    <option value="before_6_months">Before 6 Months</option>
+                    <option value="all">All Time</option>
+                </select>
+            </label>
+            <label>Sort By: 
+                <select id="sort-filter">
+                    <option value="most_viewed">Most Viewed</option>
+                    <option value="most_liked">Most Liked</option>
+                </select>
+            </label>
+        </div>
         <div id="result"></div>
     </main>
     <script src="script.js"></script>
