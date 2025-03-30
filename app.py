@@ -7,9 +7,11 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
 import re
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import os
 
 app = Flask(__name__)
-CORS(app)
+# Explicitly allow CORS for your GitHub Pages origin
+CORS(app, resources={r"/search": {"origins": "https://rs-bull.github.io"}})
 
 # Headers to mimic a browser
 headers = {
@@ -120,21 +122,27 @@ def search_videos():
     upload_filter = request.args.get('uploadDate', 'all')
     sort_by = request.args.get('sortBy', 'most_viewed')
 
+    if not query:
+        return jsonify({'error': 'Query parameter is required'}), 400
+
     cache_key = f"{query}_{upload_filter}_{sort_by}"
     if cache_key in cache:
         return jsonify(cache[cache_key])
 
-    url = f"https://www.youtube.com/results?search_query={query}"
-    response = requests.get(url, headers=headers)
-    data = extract_yt_initial_data(response.text)
-    if not data:
-        return jsonify({'error': 'Unable to find video data'}), 500
-
     try:
-        # Adjust path based on YouTube's structure
+        url = f"https://www.youtube.com/results?search_query={query}"
+        response = requests.get(url, headers=headers)
+        if not response.ok:
+            return jsonify({'error': 'Failed to fetch YouTube search results'}), 502
+
+        data = extract_yt_initial_data(response.text)
+        if not data:
+            return jsonify({'error': 'Unable to parse video data from YouTube'}), 500
+
         contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
         videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
         video_list = []
+
         for video in videos[:200]:
             if 'videoRenderer' not in video:
                 continue
@@ -149,17 +157,18 @@ def search_videos():
 
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             video_response = requests.get(video_url, headers=headers)
-            video_data = extract_yt_initial_data(video_response.text)
             views = '0'
             likes = 0
-            if video_data:
-                try:
-                    video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
-                    views = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
-                    likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
-                    likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', '')) if likes_data else 0
-                except (KeyError, IndexError):
-                    pass
+            if video_response.ok:
+                video_data = extract_yt_initial_data(video_response.text)
+                if video_data:
+                    try:
+                        video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
+                        views = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
+                        likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
+                        likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', '')) if likes_data else 0
+                    except (KeyError, IndexError):
+                        pass
 
             views = parse_views(views)
             duration_seconds = parse_duration(duration)
@@ -178,7 +187,6 @@ def search_videos():
             except Exception:
                 pass
 
-            # Relaxed matching
             title_match = any(word in title.lower() for word in query.lower().split())
             description_match = any(word in description.lower() for word in query.lower().split())
             content_match = transcript and any(word in transcript.lower() for word in query.lower().split())
@@ -216,8 +224,8 @@ def search_videos():
             cache.pop(next(iter(cache)))
 
         return jsonify(video_list)
-    except (KeyError, IndexError) as e:
-        return jsonify({'error': f'Error parsing video data: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
