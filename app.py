@@ -1,4 +1,3 @@
-import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from bs4 import BeautifulSoup
@@ -6,8 +5,8 @@ import requests
 import json
 from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import re
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 app = Flask(__name__)
 CORS(app)
@@ -25,13 +24,40 @@ def extract_yt_initial_data(html):
     soup = BeautifulSoup(html, 'html.parser')
     scripts = soup.find_all('script')
     for script in scripts:
-        if 'ytInitialData' in str(script):
-            json_str = script.string.split('ytInitialData = ')[1].split(';</script>')[0]
-            return json.loads(json_str)
+        if 'ytInitialData' in script.text:
+            start = script.text.find('{')
+            end = script.text.rfind('}') + 1
+            json_data = script.text[start:end]
+            return json.loads(json_data)
     return None
 
-# Helper function to parse views
+# Parse relative time (e.g., "5 years ago") to a date
+def parse_relative_time(time_str):
+    now = datetime.now()
+    match = re.match(r'(\d+)\s*(year|month|week|day|hour|minute|second)s?\s*ago', time_str)
+    if not match:
+        return now  # Default to now if parsing fails
+    value, unit = int(match.group(1)), match.group(2)
+    if unit == 'year':
+        return now - timedelta(days=value * 365)
+    elif unit == 'month':
+        return now - timedelta(days=value * 30)
+    elif unit == 'week':
+        return now - timedelta(weeks=value)
+    elif unit == 'day':
+        return now - timedelta(days=value)
+    elif unit == 'hour':
+        return now - timedelta(hours=value)
+    elif unit == 'minute':
+        return now - timedelta(minutes=value)
+    elif unit == 'second':
+        return now - timedelta(seconds=value)
+    return now
+
+# Parse views (e.g., "1.2M views")
 def parse_views(view_text):
+    if not view_text or view_text == 'Unknown':
+        return 0
     view_text = view_text.replace(',', '').replace(' views', '')
     if 'K' in view_text:
         return int(float(view_text.replace('K', '')) * 1000)
@@ -39,9 +65,10 @@ def parse_views(view_text):
         return int(float(view_text.replace('M', '')) * 1000000)
     return int(view_text)
 
-# Helper function to parse duration
+# Parse duration (e.g., "5:30" or "1:23:45")
 def parse_duration(duration_text):
-    # Example: "5:30" or "1:23:45"
+    if not duration_text or duration_text == 'Unknown':
+        return 0
     parts = duration_text.split(':')
     if len(parts) == 3:  # Hours:Minutes:Seconds
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
@@ -54,7 +81,6 @@ def get_comments_and_sentiment(video_id):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
         yt_data = extract_yt_initial_data(response.text)
         
         # Extract comments (limited to 100-150)
@@ -89,9 +115,9 @@ def get_comments_and_sentiment(video_id):
     except:
         return 0.5  # Neutral if comments can't be fetched
 
-# Search endpoint
+# Search videos via web scraping, including details and transcripts
 @app.route('/search', methods=['GET'])
-def search():
+def search_videos():
     query = request.args.get('query')
     upload_filter = request.args.get('uploadDate', 'all')
     sort_by = request.args.get('sortBy', 'most_viewed')
@@ -101,35 +127,46 @@ def search():
     if cache_key in cache:
         return jsonify(cache[cache_key])
 
-    # Search YouTube
-    search_url = f"https://www.youtube.com/results?search_query={query}"
-    response = requests.get(search_url, headers=headers)
-    yt_data = extract_yt_initial_data(response.text)
+    url = f"https://www.youtube.com/results?search_query={query}"
+    response = requests.get(url, headers=headers)
+    data = extract_yt_initial_data(response.text)
+    if not data:
+        return jsonify({'error': 'Unable to find video data'}), 500
 
-    videos = []
     try:
-        video_list = yt_data['contents']['twoColumnBrowseResultsRenderer']['tabs'][1]['tabRenderer']['content']['sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents']
-        for item in video_list[:200]:  # Scan up to 200 videos
-            if 'videoRenderer' in item:
-                video = item['videoRenderer']
-                video_id = video['videoId']
-                title = video['title']['runs'][0]['text']
-                views = parse_views(video['viewCountText']['simpleText'])
-                duration = parse_duration(video['lengthText']['simpleText'])
-                likes = int(video.get('likeCount', {'simpleText': '0'})['simpleText'].replace(',', '')) if 'likeCount' in video else 0
-                upload_date_str = video['publishedTimeText']['simpleText']
-                
+        videos = data['contents']['twoColumnSearchResultsRenderer']['primaryContents']['sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents']
+        video_list = []
+        for video in videos[:200]:  # Scan up to 200 videos
+            if 'videoRenderer' in video:
+                video_data = video['videoRenderer']
+                video_id = video_data['videoId']
+                title = video_data['title']['runs'][0]['text']
+                thumbnail = video_data['thumbnail']['thumbnails'][0]['url']
+                duration = video_data.get('lengthText', {}).get('simpleText', '0:00')
+                channel = video_data['ownerText']['runs'][0]['text']
+                published = video_data.get('publishedTimeText', {}).get('simpleText', 'Unknown')
+                description = video_data.get('detailedMetadataSnippets', [{}])[0].get('snippetText', {}).get('runs', [{}])[0].get('text', '')
+
+                # Fetch additional details
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                video_response = requests.get(video_url, headers=headers)
+                video_data = extract_yt_initial_data(video_response.text)
+                views = '0'
+                likes = 0
+                if video_data:
+                    try:
+                        video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
+                        views = video_info['viewCount']['videoViewCountRenderer']['viewCount']['simpleText']
+                        likes = int(video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {}).get('defaultText', {}).get('simpleText', '0').replace(',', ''))
+                    except (KeyError, IndexError):
+                        pass
+
+                # Parse views and duration
+                views = parse_views(views)
+                duration_seconds = parse_duration(duration)
+
                 # Parse upload date
-                upload_date = datetime.now()
-                if 'day' in upload_date_str:
-                    days = int(re.search(r'\d+', upload_date_str).group())
-                    upload_date = upload_date - timedelta(days=days)
-                elif 'month' in upload_date_str:
-                    months = int(re.search(r'\d+', upload_date_str).group())
-                    upload_date = upload_date - timedelta(days=months * 30)
-                elif 'year' in upload_date_str:
-                    years = int(re.search(r'\d+', upload_date_str).group())
-                    upload_date = upload_date - timedelta(days=years * 365)
+                upload_date = parse_relative_time(published)
 
                 # Apply upload date filter
                 six_months_ago = datetime.now() - timedelta(days=180)
@@ -138,54 +175,60 @@ def search():
                 elif upload_filter == 'before_6_months' and upload_date >= six_months_ago:
                     continue
 
-                # Get transcript to match content with title/description
-                transcript = ''
+                # Fetch transcript
+                transcript = None
                 try:
-                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                    transcript = ' '.join([t['text'] for t in transcript_list])
-                except:
+                    transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+                    transcript = ' '.join(item['text'] for item in transcript_data)
+                except Exception:
                     pass
 
-                # Check if title matches content
-                title_match = query.lower() in title.lower() or (transcript and query.lower() in transcript.lower())
+                # Check if title/description matches content
+                title_match = query.lower() in title.lower() or query.lower() in description.lower()
+                content_match = transcript and query.lower() in transcript.lower()
+                if not (title_match or content_match):
+                    continue
 
-                if title_match:
-                    # Get sentiment from comments
-                    sentiment_ratio = get_comments_and_sentiment(video_id)
-                    
-                    # Calculate views-to-likes ratio
-                    views_to_likes = likes / views if views > 0 else 0
-                    
-                    # Score the video
-                    score = (sentiment_ratio * 0.4) + (views_to_likes * 0.3) + (views * 0.000001 * 0.3)
-                    
-                    videos.append({
-                        'id': video_id,
-                        'title': title,
-                        'views': views,
-                        'duration': duration,  # In seconds
-                        'likes': likes,
-                        'upload_date': upload_date.strftime('%Y-%m-%d'),
-                        'score': score
-                    })
-    except:
-        pass
+                # Get sentiment from comments
+                sentiment_ratio = get_comments_and_sentiment(video_id)
 
-    # Sort videos
-    if sort_by == 'most_viewed':
-        videos.sort(key=lambda x: x['views'], reverse=True)
-    elif sort_by == 'most_liked':
-        videos.sort(key=lambda x: x['likes'], reverse=True)
+                # Calculate views-to-likes ratio
+                views_to_likes = likes / views if views > 0 else 0
 
-    # Take top 50 videos after sorting
-    videos = videos[:50]
+                # Score the video
+                score = (sentiment_ratio * 0.4) + (views_to_likes * 0.3) + (views * 0.000001 * 0.3)
 
-    # Cache the result
-    cache[cache_key] = videos
-    if len(cache) > 100:  # Limit cache size
-        cache.pop(next(iter(cache)))
+                video_list.append({
+                    'id': video_id,
+                    'title': title,
+                    'thumbnail': thumbnail,
+                    'duration': duration_seconds,  # In seconds
+                    'channel': channel,
+                    'published': published,
+                    'description': description,
+                    'views': views,
+                    'likes': likes,
+                    'transcript': transcript,
+                    'score': score,
+                    'upload_date': upload_date.strftime('%Y-%m-%d')
+                })
+            if len(video_list) >= 50:  # Limit to 50 videos to improve performance
+                break
 
-    return jsonify(videos)
+        # Sort videos
+        if sort_by == 'most_viewed':
+            video_list.sort(key=lambda x: x['views'], reverse=True)
+        elif sort_by == 'most_liked':
+            video_list.sort(key=lambda x: x['likes'], reverse=True)
+
+        # Cache the result
+        cache[cache_key] = video_list
+        if len(cache) > 100:  # Limit cache size
+            cache.pop(next(iter(cache)))
+
+        return jsonify(video_list)
+    except KeyError:
+        return jsonify({'error': 'Error parsing video data'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
