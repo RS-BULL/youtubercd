@@ -119,9 +119,11 @@ function displayVideos(category, videos, index) {
 }
 
 // Handle form submission
-document.getElementById('searchForm').addEventListener('submit', async (e) => {
+document.getElementById('searchForm').addEvent OBSOLETEListener('submit', async (e) => {
     e.preventDefault();
-    const query = document.getElementById('query').value;
+    const query = document.getElementById('query').value.trim();
+    if (!query) return;
+
     const resultDiv = document.getElementById('result');
     resultDiv.innerHTML = '<div class="loader"></div>';
 
@@ -129,12 +131,21 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     saveSearchHistory(query);
 
     try {
-        // Use default values if filters are not selected
         const uploadFilter = document.getElementById('upload-filter').value || 'all';
         const sortFilter = document.getElementById('sort-filter').value || 'most_viewed';
-        const response = await fetch(`${backendUrl}/search?query=${encodeURIComponent(query)}&uploadDate=${uploadFilter}&sortBy=${sortFilter}`);
+        const response = await fetch(`${backendUrl}/search?query=${encodeURIComponent(query)}&uploadDate=${uploadFilter}&sortBy=${sortFilter}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
         const videos = await response.json();
-        if (!response.ok) throw new Error(videos.error || 'Error fetching videos');
 
         // Categorize videos by duration
         allVideos.short = videos.filter(video => video.duration < 10 * 60 && video.duration > 0);
@@ -218,8 +229,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
             }
         });
     } catch (error) {
-        console.error('Error:', error);
-        resultDiv.innerHTML = `<p class="error">${error.message}</p>`;
+        console.error('Fetch error:', error);
+        resultDiv.innerHTML = `<p class="error">Failed to load videos: ${error.message}. Please try again later.</p>`;
     }
 });
 
