@@ -6,14 +6,10 @@ import json
 from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
 import re
-import logging
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 app = Flask(__name__)
 CORS(app)
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Headers to mimic a browser
 headers = {
@@ -40,7 +36,7 @@ def parse_relative_time(time_str):
     now = datetime.now()
     match = re.match(r'(\d+)\s*(year|month|week|day|hour|minute|second)s?\s*ago', time_str)
     if not match:
-        return now  # Default to now if parsing fails
+        return now
     value, unit = int(match.group(1)), match.group(2)
     if unit == 'year':
         return now - timedelta(days=value * 365)
@@ -74,11 +70,48 @@ def parse_duration(duration_text):
     if not duration_text or duration_text == 'Unknown':
         return 0
     parts = duration_text.split(':')
-    if len(parts) == 3:  # Hours:Minutes:Seconds
+    if len(parts) == 3:
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-    elif len(parts) == 2:  # Minutes:Seconds
+    elif len(parts) == 2:
         return int(parts[0]) * 60 + int(parts[1])
     return 0
+
+# Helper function to get comments and analyze sentiment
+def get_comments_and_sentiment(video_id):
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        response = requests.get(url, headers=headers)
+        yt_data = extract_yt_initial_data(response.text)
+        
+        comments = []
+        try:
+            comment_section = yt_data['contents']['twoColumnWatchNextResults']['results']['results']['contents']
+            for item in comment_section:
+                if 'commentThreadRenderer' in str(item):
+                    comment = item['commentThreadRenderer']['comment']['commentRenderer']
+                    comment_text = comment['contentText']['runs'][0]['text']
+                    likes = int(comment.get('voteCount', {'simpleText': '0'})['simpleText'].replace(',', ''))
+                    comments.append({'text': comment_text, 'likes': likes})
+                    if len(comments) >= 150:
+                        break
+        except:
+            pass
+
+        analyzer = SentimentIntensityAnalyzer()
+        positive = 0
+        negative = 0
+        for comment in comments[:100]:
+            score = analyzer.polarity_scores(comment['text'])
+            if score['compound'] >= 0.05:
+                positive += 1 + (comment['likes'] * 0.1)
+            elif score['compound'] <= -0.05:
+                negative += 1 + (comment['likes'] * 0.1)
+        
+        total = positive + negative
+        sentiment_ratio = positive / total if total > 0 else 0
+        return sentiment_ratio
+    except:
+        return 0.5
 
 # Search videos via web scraping
 @app.route('/search', methods=['GET'])
@@ -87,130 +120,103 @@ def search_videos():
     upload_filter = request.args.get('uploadDate', 'all')
     sort_by = request.args.get('sortBy', 'most_viewed')
 
-    # Log the request
-    logger.info(f"Received search request: query={query}, upload_filter={upload_filter}, sort_by={sort_by}")
-
-    # Check cache
     cache_key = f"{query}_{upload_filter}_{sort_by}"
     if cache_key in cache:
-        logger.info("Returning cached result")
         return jsonify(cache[cache_key])
 
     url = f"https://www.youtube.com/results?search_query={query}"
     response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        logger.error(f"Failed to fetch YouTube search page: status_code={response.status_code}")
-        return jsonify({'error': 'Failed to fetch YouTube search page'}), 500
-
     data = extract_yt_initial_data(response.text)
     if not data:
-        logger.error("Unable to find ytInitialData in the page")
         return jsonify({'error': 'Unable to find video data'}), 500
 
-    # Log the raw ytInitialData for debugging
-    logger.info(f"ytInitialData: {json.dumps(data, indent=2)[:500]}...")  # Log first 500 characters
-
-    video_list = []
     try:
-        # Try to find the video list in the new structure
+        # Adjust path based on YouTube's structure
         contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
-        if not contents:
-            logger.error("No contents found in ytInitialData")
-            return jsonify({'error': 'No video contents found'}), 500
-
-        videos = None
-        for section in contents:
-            if 'itemSectionRenderer' in section:
-                videos = section['itemSectionRenderer'].get('contents', [])
-                break
-
-        if not videos:
-            logger.error("No videos found in itemSectionRenderer")
-            return jsonify({'error': 'No videos found'}), 500
-
-        logger.info(f"Found {len(videos)} videos in search results")
-
-        for video in videos[:200]:  # Scan up to 200 videos
+        videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
+        video_list = []
+        for video in videos[:200]:
             if 'videoRenderer' not in video:
                 continue
-
             video_data = video['videoRenderer']
             video_id = video_data.get('videoId')
-            title = video_data.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown Title')
+            title = video_data.get('title', {}).get('runs', [{}])[0].get('text', 'Unknown')
             thumbnail = video_data.get('thumbnail', {}).get('thumbnails', [{}])[0].get('url', '')
             duration = video_data.get('lengthText', {}).get('simpleText', '0:00')
-            channel = video_data.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown Channel')
+            channel = video_data.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
             published = video_data.get('publishedTimeText', {}).get('simpleText', 'Unknown')
             description = video_data.get('detailedMetadataSnippets', [{}])[0].get('snippetText', {}).get('runs', [{}])[0].get('text', '')
-            views = video_data.get('viewCountText', {}).get('simpleText', '0 views')
 
-            # Parse views and duration
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_response = requests.get(video_url, headers=headers)
+            video_data = extract_yt_initial_data(video_response.text)
+            views = '0'
+            likes = 0
+            if video_data:
+                try:
+                    video_info = video_data['contents']['twoColumnWatchNextResults']['results']['results']['contents'][0]['videoPrimaryInfoRenderer']
+                    views = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
+                    likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
+                    likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', '')) if likes_data else 0
+                except (KeyError, IndexError):
+                    pass
+
             views = parse_views(views)
             duration_seconds = parse_duration(duration)
-
-            # Parse upload date
             upload_date = parse_relative_time(published)
 
-            # Apply upload date filter
-            six_months_ago =ാ
-
+            six_months_ago = datetime.now() - timedelta(days=180)
             if upload_filter == 'last_6_months' and upload_date < six_months_ago:
-                logger.info(f"Skipping video {title}: too old for last_6_months filter")
                 continue
             elif upload_filter == 'before_6_months' and upload_date >= six_months_ago:
-                logger.info(f"Skipping video {title}: too new for before_6_months filter")
                 continue
 
-            # Relax the query matching (remove transcript dependency)
+            transcript = None
+            try:
+                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+                transcript = ' '.join(item['text'] for item in transcript_data)
+            except Exception:
+                pass
+
+            # Relaxed matching
             title_match = any(word in title.lower() for word in query.lower().split())
             description_match = any(word in description.lower() for word in query.lower().split())
-            if not (title_match or description_match):
-                logger.info(f"Skipping video {title}: query not found in title or description")
+            content_match = transcript and any(word in transcript.lower() for word in query.lower().split())
+            if not (title_match or description_match or content_match):
                 continue
 
-            # For now, skip sentiment analysis to reduce requests
-            sentiment_ratio = 0.5  # Neutral default
-            likes = 0  # We'll reintroduce this later
-
-            # Calculate views-to-likes ratio
+            sentiment_ratio = get_comments_and_sentiment(video_id)
             views_to_likes = likes / views if views > 0 else 0
-
-            # Score the video
             score = (sentiment_ratio * 0.4) + (views_to_likes * 0.3) + (views * 0.000001 * 0.3)
 
             video_list.append({
                 'id': video_id,
                 'title': title,
                 'thumbnail': thumbnail,
-                'duration': duration_seconds,  # In seconds
+                'duration': duration_seconds,
                 'channel': channel,
                 'published': published,
                 'description': description,
                 'views': views,
                 'likes': likes,
+                'transcript': transcript,
                 'score': score,
                 'upload_date': upload_date.strftime('%Y-%m-%d')
             })
-
-            if len(video_list) >= 50:  # Limit to 50 videos to improve performance
+            if len(video_list) >= 50:
                 break
 
-        logger.info(f"After filtering, {len(video_list)} videos remain")
-
-        # Sort videos
         if sort_by == 'most_viewed':
             video_list.sort(key=lambda x: x['views'], reverse=True)
         elif sort_by == 'most_liked':
             video_list.sort(key=lambda x: x['likes'], reverse=True)
 
-        # Cache the result
         cache[cache_key] = video_list
-        if len(cache) > 100:  # Limit cache size
+        if len(cache) > 100:
             cache.pop(next(iter(cache)))
 
         return jsonify(video_list)
-    except Exception as e:
-        logger.error(f"Error parsing video data: {str(e)}")
+    except (KeyError, IndexError) as e:
         return jsonify({'error': f'Error parsing video data: {str(e)}'}), 500
 
 if __name__ == '__main__':
