@@ -236,3 +236,39 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
 // Load search history on page load
 loadSearchHistory();
+let shortTermIndex = 0;
+let longTermIndex = 0;
+const VIDEOS_PER_LOAD = 2;
+
+function displayVideos(type, videos, index) {
+    const grid = document.getElementById('video-grid');
+    const end = Math.min(index + VIDEOS_PER_LOAD, videos.length);
+    const videosToShow = videos.slice(index, end);
+    videosToShow.forEach(video => {
+        grid.innerHTML += `
+            <div class="video-card">
+                <a href="https://www.youtube.com/watch?v=${video.id}" target="_blank">
+                    <img src="${video.thumbnail}" alt="${video.title}" style="aspect-ratio: 16/9; width: 100%; object-fit: cover;">
+                    <div class="video-info">
+                        <h3>${video.title}</h3>
+                        <p>${video.channel} • ${video.upload_date}</p>
+                        <p>${formatNumber(video.views)} views • ${formatNumber(video.likes)} likes</p>
+                        <p>${parseDuration(video.duration)}</p>
+                        <p>${video.description.slice(0, 100)}...</p>
+                    </div>
+                </a>
+            </div>
+        `;
+    });
+    return end;
+}
+
+document.getElementById('load-more').addEventListener('click', () => {
+    const activeTab = document.querySelector('.tab.active').dataset.tab;
+    const videos = allVideos[activeTab === 'short' ? 'short' : 'long'];
+    if (activeTab === 'short') {
+        shortTermIndex = displayVideos('short', videos, shortTermIndex);
+    } else {
+        longTermIndex = displayVideos('long', videos, longTermIndex);
+    }
+});
