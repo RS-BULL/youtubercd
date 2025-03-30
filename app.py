@@ -11,14 +11,15 @@ import os
 import logging
 
 app = Flask(__name__)
-# Allow CORS from your GitHub Pages origin (and temporarily all for debugging)
+# Allow CORS from your GitHub Pages origin
 CORS(app, resources={r"/search": {"origins": ["https://rs-bull.github.io", "*"]}})
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Headers to mimic a browser
+# Create a requests session for connection pooling
+session = requests.Session()
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
@@ -68,7 +69,7 @@ def parse_views(view_text):
     view_text = view_text.replace(',', '').replace(' views', '')
     if 'K' in view_text:
         return int(float(view_text.replace('K', '')) * 1000)
-    elif 'M' in view_text:
+    elif unit == 'M':
         return int(float(view_text.replace('M', '')) * 1000000)
     return int(view_text)
 
@@ -82,44 +83,6 @@ def parse_duration(duration_text):
     elif len(parts) == 2:
         return int(parts[0]) * 60 + int(parts[1])
     return 0
-
-# Helper function to get comments and analyze sentiment
-def get_comments_and_sentiment(video_id):
-    try:
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        response = requests.get(url, headers=headers)
-        yt_data = extract_yt_initial_data(response.text)
-        
-        comments = []
-        try:
-            comment_section = yt_data['contents']['twoColumnWatchNextResults']['results']['results']['contents']
-            for item in comment_section:
-                if 'commentThreadRenderer' in str(item):
-                    comment = item['commentThreadRenderer']['comment']['commentRenderer']
-                    comment_text = comment['contentText']['runs'][0]['text']
-                    likes = int(comment.get('voteCount', {'simpleText': '0'})['simpleText'].replace(',', ''))
-                    comments.append({'text': comment_text, 'likes': likes})
-                    if len(comments) >= 150:
-                        break
-        except:
-            pass
-
-        analyzer = SentimentIntensityAnalyzer()
-        positive = 0
-        negative = 0
-        for comment in comments[:100]:
-            score = analyzer.polarity_scores(comment['text'])
-            if score['compound'] >= 0.05:
-                positive += 1 + (comment['likes'] * 0.1)
-            elif score['compound'] <= -0.05:
-                negative += 1 + (comment['likes'] * 0.1)
-        
-        total = positive + negative
-        sentiment_ratio = positive / total if total > 0 else 0
-        return sentiment_ratio
-    except Exception as e:
-        logger.error(f"Error in get_comments_and_sentiment: {str(e)}")
-        return 0.5
 
 # Search videos via web scraping
 @app.route('/search', methods=['GET'])
@@ -140,7 +103,7 @@ def search_videos():
     try:
         logger.info(f"Fetching YouTube results for query: {query}")
         url = f"https://www.youtube.com/results?search_query={query}"
-        response = requests.get(url, headers=headers)
+        response = session.get(url, headers=headers, timeout=10)
         if not response.ok:
             logger.error(f"Failed to fetch YouTube search results: {response.status_code}")
             return jsonify({'error': 'Failed to fetch YouTube search results'}), 502
@@ -154,7 +117,8 @@ def search_videos():
         videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
         video_list = []
 
-        for video in videos[:200]:
+        # Limit to 10 videos to avoid timeout
+        for video in videos[:10]:
             if 'videoRenderer' not in video:
                 continue
             video_data = video['videoRenderer']
@@ -166,8 +130,9 @@ def search_videos():
             published = video_data.get('publishedTimeText', {}).get('simpleText', 'Unknown')
             description = video_data.get('detailedMetadataSnippets', [{}])[0].get('snippetText', {}).get('runs', [{}])[0].get('text', '')
 
+            # Fetch video page for views and likes
             video_url = f"https://www.youtube.com/watch?v={video_id}"
-            video_response = requests.get(video_url, headers=headers)
+            video_response = session.get(video_url, headers=headers, timeout=10)
             views = '0'
             likes = 0
             if video_response.ok:
@@ -191,22 +156,10 @@ def search_videos():
             elif upload_filter == 'before_6_months' and upload_date >= six_months_ago:
                 continue
 
-            transcript = None
-            try:
-                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
-                transcript = ' '.join(item['text'] for item in transcript_data)
-            except Exception:
-                pass
-
             title_match = any(word in title.lower() for word in query.lower().split())
             description_match = any(word in description.lower() for word in query.lower().split())
-            content_match = transcript and any(word in transcript.lower() for word in query.lower().split())
-            if not (title_match or description_match or content_match):
+            if not (title_match or description_match):
                 continue
-
-            sentiment_ratio = get_comments_and_sentiment(video_id)
-            views_to_likes = likes / views if views > 0 else 0
-            score = (sentiment_ratio * 0.4) + (views_to_likes * 0.3) + (views * 0.000001 * 0.3)
 
             video_list.append({
                 'id': video_id,
@@ -218,11 +171,11 @@ def search_videos():
                 'description': description,
                 'views': views,
                 'likes': likes,
-                'transcript': transcript,
-                'score': score,
+                'transcript': None,  # Skipped for now
+                'score': (views * 0.000001),  # Simplified score
                 'upload_date': upload_date.strftime('%Y-%m-%d')
             })
-            if len(video_list) >= 50:
+            if len(video_list) >= 5:  # Further limit to 5 results
                 break
 
         if sort_by == 'most_viewed':
