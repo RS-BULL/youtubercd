@@ -7,6 +7,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from datetime import datetime, timedelta
 import re
 import os
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 app = Flask(__name__)
 
@@ -73,6 +74,64 @@ def parse_duration(duration_text):
         return int(parts[0]) * 60 + int(parts[1])
     return 0
 
+def calculate_relevance_score(query, title, description, transcript):
+    query_words = set(query.lower().split())
+    score = 0
+
+    # Title relevance (weight: 0.5)
+    title_words = title.lower().split()
+    title_matches = len(query_words.intersection(title_words))
+    score += (title_matches / len(query_words)) * 0.5 if query_words else 0
+
+    # Description relevance (weight: 0.3)
+    description_words = description.lower().split()
+    description_matches = len(query_words.intersection(description_words))
+    score += (description_matches / len(query_words)) * 0.3 if query_words else 0
+
+    # Transcript relevance (weight: 0.2)
+    if transcript:
+        transcript_words = transcript.lower().split()
+        transcript_matches = len(query_words.intersection(transcript_words))
+        score += (transcript_matches / len(query_words)) * 0.2 if query_words else 0
+
+    return score
+
+def get_comments_and_sentiment(video_id):
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        response = requests.get(url, headers=headers)
+        yt_data = extract_yt_initial_data(response.text)
+        
+        comments = []
+        try:
+            comment_section = yt_data['contents']['twoColumnWatchNextResults']['results']['results']['contents']
+            for item in comment_section:
+                if 'commentThreadRenderer' in str(item):
+                    comment = item['commentThreadRenderer']['comment']['commentRenderer']
+                    comment_text = comment['contentText']['runs'][0]['text']
+                    likes = int(comment.get('voteCount', {'simpleText': '0'})['simpleText'].replace(',', ''))
+                    comments.append({'text': comment_text, 'likes': likes})
+                    if len(comments) >= 50:
+                        break
+        except:
+            pass
+
+        analyzer = SentimentIntensityAnalyzer()
+        positive = 0
+        negative = 0
+        for comment in comments[:50]:
+            score = analyzer.polarity_scores(comment['text'])
+            if score['compound'] >= 0.05:
+                positive += 1 + (comment['likes'] * 0.1)
+            elif score['compound'] <= -0.05:
+                negative += 1 + (comment['likes'] * 0.1)
+        
+        total = positive + negative
+        sentiment_ratio = positive / total if total > 0 else 0.5
+        return sentiment_ratio
+    except:
+        return 0.5
+
 @app.route('/search', methods=['GET'])
 def search_videos():
     query = request.args.get('query')
@@ -129,6 +188,21 @@ def search_videos():
             elif upload_filter == 'before_6_months' and upload_date >= six_months_ago:
                 continue
 
+            transcript = None
+            try:
+                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+                transcript = ' '.join(item['text'] for item in transcript_data)
+            except Exception:
+                pass
+
+            # Calculate scores
+            relevance_score = calculate_relevance_score(query, title, description, transcript)
+            sentiment_score = get_comments_and_sentiment(video_id)
+            views_to_likes = likes / views if views > 0 else 0
+
+            # Final score: 40% relevance, 30% sentiment, 20% views-to-likes, 10% views
+            final_score = (relevance_score * 0.4) + (sentiment_score * 0.3) + (views_to_likes * 0.2) + (views * 0.000001 * 0.1)
+
             video_list.append({
                 'id': video_id,
                 'title': title,
@@ -139,11 +213,16 @@ def search_videos():
                 'description': description,
                 'views': views,
                 'likes': likes,
-                'upload_date': upload_date.strftime('%Y-%m-%d')
+                'upload_date': upload_date.strftime('%Y-%m-%d'),
+                'score': final_score
             })
             if len(video_list) >= 20:
                 break
 
+        # Sort by final score initially
+        video_list.sort(key=lambda x: x['score'], reverse=True)
+
+        # Apply user-selected sorting
         if sort_by == 'most_viewed':
             video_list.sort(key=lambda x: x['views'], reverse=True)
         elif sort_by == 'most_liked':
