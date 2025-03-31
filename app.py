@@ -87,6 +87,29 @@ def search_videos():
 
     return jsonify({'results': videos})
 
+@app.route('/transcript', methods=['GET'])
+def get_transcript():
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({"error": "Missing video_id parameter"}), 400
+
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        return jsonify({"transcript": transcript})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/sentiment', methods=['POST'])
+def sentiment_analysis():
+    data = request.json
+    if not data or 'text' not in data:
+        return jsonify({"error": "Missing text for sentiment analysis"}), 400
+
+    analyzer = SentimentIntensityAnalyzer()
+    sentiment_score = analyzer.polarity_scores(data['text'])
+
+    return jsonify({"sentiment": sentiment_score})
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
