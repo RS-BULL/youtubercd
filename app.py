@@ -23,13 +23,11 @@ cache = {}
 
 def extract_yt_initial_data(html):
     soup = BeautifulSoup(html, 'html.parser')
-    scripts = soup.find_all('script')
-    for script in scripts:
+    for script in soup.find_all('script'):
         if 'ytInitialData' in script.text:
             start = script.text.find('{')
             end = script.text.rfind('}') + 1
-            json_data = script.text[start:end]
-            return json.loads(json_data)
+            return json.loads(script.text[start:end])
     return None
 
 def parse_relative_time(time_str):
@@ -38,21 +36,8 @@ def parse_relative_time(time_str):
     if not match:
         return now
     value, unit = int(match.group(1)), match.group(2)
-    if unit == 'year':
-        return now - timedelta(days=value * 365)
-    elif unit == 'month':
-        return now - timedelta(days=value * 30)
-    elif unit == 'week':
-        return now - timedelta(weeks=value)
-    elif unit == 'day':
-        return now - timedelta(days=value)
-    elif unit == 'hour':
-        return now - timedelta(hours=value)
-    elif unit == 'minute':
-        return now - timedelta(minutes=value)
-    elif unit == 'second':
-        return now - timedelta(seconds=value)
-    return now
+    deltas = {'year': 365, 'month': 30, 'week': 7, 'day': 1, 'hour': 1/24, 'minute': 1/1440, 'second': 1/86400}
+    return now - timedelta(days=value * deltas[unit])
 
 def parse_views(view_text):
     if not view_text or view_text == 'Unknown':
@@ -74,34 +59,27 @@ def parse_duration(duration_text):
         return int(parts[0]) * 60 + int(parts[1])
     return 0
 
-def calculate_relevance_score(query, title, description, transcript):
-    query_words = set(query.lower().split())
-    score = 0
-
-    # Title relevance (weight: 0.5)
-    title_words = title.lower().split()
-    title_matches = len(query_words.intersection(title_words))
-    score += (title_matches / len(query_words)) * 0.5 if query_words else 0
-
-    # Description relevance (weight: 0.3)
-    description_words = description.lower().split()
-    description_matches = len(query_words.intersection(description_words))
-    score += (description_matches / len(query_words)) * 0.3 if query_words else 0
-
-    # Transcript relevance (weight: 0.2)
-    if transcript:
-        transcript_words = transcript.lower().split()
-        transcript_matches = len(query_words.intersection(transcript_words))
-        score += (transcript_matches / len(query_words)) * 0.2 if query_words else 0
-
-    return score
+def get_transcript(video_id):
+    try:
+        transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+        total_duration = sum(item['duration'] for item in transcript_data)
+        target_duration = total_duration * 0.25  # 25% of transcript
+        current_duration = 0
+        transcript_text = ''
+        for item in transcript_data:
+            transcript_text += item['text'] + ' '
+            current_duration += item['duration']
+            if current_duration >= target_duration:
+                break
+        return transcript_text.strip()
+    except Exception:
+        return None
 
 def get_comments_and_sentiment(video_id):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         response = requests.get(url, headers=headers)
         yt_data = extract_yt_initial_data(response.text)
-        
         comments = []
         try:
             comment_section = yt_data['contents']['twoColumnWatchNextResults']['results']['results']['contents']
@@ -111,7 +89,7 @@ def get_comments_and_sentiment(video_id):
                     comment_text = comment['contentText']['runs'][0]['text']
                     likes = int(comment.get('voteCount', {'simpleText': '0'})['simpleText'].replace(',', ''))
                     comments.append({'text': comment_text, 'likes': likes})
-                    if len(comments) >= 50:
+                    if len(comments) >= 25:
                         break
         except:
             pass
@@ -119,24 +97,32 @@ def get_comments_and_sentiment(video_id):
         analyzer = SentimentIntensityAnalyzer()
         positive = 0
         negative = 0
-        for comment in comments[:50]:
+        for comment in comments[:25]:
             score = analyzer.polarity_scores(comment['text'])
             if score['compound'] >= 0.05:
                 positive += 1 + (comment['likes'] * 0.1)
             elif score['compound'] <= -0.05:
                 negative += 1 + (comment['likes'] * 0.1)
-        
         total = positive + negative
-        sentiment_ratio = positive / total if total > 0 else 0.5
-        return sentiment_ratio
+        return positive / total if total > 0 else 0.5
     except:
         return 0.5
+
+def calculate_relevance_score(query, title, description, transcript):
+    query_words = set(query.lower().split())
+    score = 0
+    for text in [title, description, transcript]:
+        if text:
+            words = text.lower().split()
+            matches = len(query_words.intersection(words))
+            score += (matches / len(query_words)) * (0.5 if text == title else 0.3 if text == description else 0.2)
+    return score
 
 @app.route('/search', methods=['GET'])
 def search_videos():
     query = request.args.get('query')
-    upload_filter = request.args.get('uploadDate', 'all')
-    sort_by = request.args.get('sortBy', 'most_viewed')
+    upload_filter = request.args.get('uploadDate', 'all')  # Default: no filter
+    sort_by = request.args.get('sortBy', 'relevance')     # Default: relevance
 
     cache_key = f"{query}_{upload_filter}_{sort_by}"
     if cache_key in cache:
@@ -149,10 +135,11 @@ def search_videos():
         return jsonify({'error': 'Unable to find video data'}), 500
 
     try:
-        contents = data.get('contents', {}).get('twoColumnSearchResultsRenderer', {}).get('primaryContents', {}).get('sectionListRenderer', {}).get('contents', [])
+        contents = data['contents']['twoColumnSearchResultsRenderer']['primaryContents']['sectionListRenderer']['contents']
         videos = next((item['itemSectionRenderer']['contents'] for item in contents if 'itemSectionRenderer' in item), [])
         video_list = []
-        for video in videos[:50]:
+
+        for video in videos[:100]:  # Scan up to 100 videos
             if 'videoRenderer' not in video:
                 continue
             video_data = video['videoRenderer']
@@ -175,29 +162,23 @@ def search_videos():
                     views = video_info.get('viewCount', {}).get('videoViewCountRenderer', {}).get('viewCount', {}).get('simpleText', '0 views')
                     likes_data = video_info.get('videoActions', {}).get('menuRenderer', {}).get('topLevelButtons', [{}])[0].get('toggleButtonRenderer', {})
                     likes = int(likes_data.get('defaultText', {}).get('simpleText', '0').replace(',', '')) if likes_data else 0
-                except (KeyError, IndexError):
+                except:
                     pass
 
             views = parse_views(views)
             duration_seconds = parse_duration(duration)
             upload_date = parse_relative_time(published)
 
+            # Apply upload filter only if selected
             six_months_ago = datetime.now() - timedelta(days=180)
             if upload_filter == 'last_6_months' and upload_date < six_months_ago:
                 continue
             elif upload_filter == 'before_6_months' and upload_date >= six_months_ago:
                 continue
 
-            transcript = None
-            try:
-                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
-                transcript = ' '.join(item['text'] for item in transcript_data)
-            except Exception:
-                pass
-
-            # Calculate scores
-            relevance_score = calculate_relevance_score(query, title, description, transcript)
+            transcript = get_transcript(video_id)
             sentiment_score = get_comments_and_sentiment(video_id)
+            relevance_score = calculate_relevance_score(query, title, description, transcript)
             views_to_likes = likes / views if views > 0 else 0
 
             # Final score: 40% relevance, 30% sentiment, 20% views-to-likes, 10% views
@@ -216,10 +197,8 @@ def search_videos():
                 'upload_date': upload_date.strftime('%Y-%m-%d'),
                 'score': final_score
             })
-            if len(video_list) >= 20:
-                break
 
-        # Sort by final score initially
+        # Sort by score by default
         video_list.sort(key=lambda x: x['score'], reverse=True)
 
         # Apply user-selected sorting
@@ -228,13 +207,18 @@ def search_videos():
         elif sort_by == 'most_liked':
             video_list.sort(key=lambda x: x['likes'], reverse=True)
 
-        cache[cache_key] = video_list
+        # Split into short and long tabs
+        short_videos = [v for v in video_list if v['duration'] <= 600]  # <10 min
+        long_videos = [v for v in video_list if v['duration'] > 600]   # >10 min
+
+        result = {'short': short_videos, 'long': long_videos}
+        cache[cache_key] = result
         if len(cache) > 100:
             cache.pop(next(iter(cache)))
 
-        return jsonify(video_list)
-    except (KeyError, IndexError) as e:
+        return jsonify(result)
+    except Exception as e:
         return jsonify({'error': f'Error parsing video data: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
