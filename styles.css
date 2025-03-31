@@ -1,11 +1,9 @@
-/* Reset default styles */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
-/* General body styling */
 body {
     font-family: 'Poppins', sans-serif;
     background: linear-gradient(135deg, #1a1a2e, #162447);
@@ -14,19 +12,16 @@ body {
     min-height: 100vh;
 }
 
-/* Header styling */
 header {
     background: linear-gradient(135deg, #162447, #1a1a2e);
     color: #e6b800;
     text-align: center;
     padding: 2rem 1rem;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
 }
 
 header h1 {
     font-size: 2.2rem;
     margin-bottom: 0.5rem;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 header p {
@@ -34,20 +29,17 @@ header p {
     color: #b0b0b0;
 }
 
-/* Main content styling */
 main {
     max-width: 1200px;
     margin: 1.5rem auto;
     padding: 0 1rem;
 }
 
-/* Form styling */
 form {
     display: flex;
     justify-content: center;
     gap: 0.5rem;
     margin-bottom: 1rem;
-    position: relative;
 }
 
 input[type="text"] {
@@ -59,8 +51,6 @@ input[type="text"] {
     max-width: 350px;
     background: #2a2a4e;
     color: #e0e0e0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    transition: box-shadow 0.3s ease;
 }
 
 input[type="text"]::placeholder {
@@ -69,7 +59,6 @@ input[type="text"]::placeholder {
 
 input[type="text"]:focus {
     outline: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 button {
@@ -83,71 +72,12 @@ button {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    transition: background 0.3s ease, transform 0.1s ease;
 }
 
 button:hover {
     background: linear-gradient(135deg, #b38f00, #e6b800);
 }
 
-button:active {
-    transform: scale(0.98);
-}
-
-/* Search history styling */
-.search-history {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 100%;
-    max-width: 350px;
-    background: #2a2a4e;
-    border-radius: 10px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-    z-index: 10;
-    padding: 0.5rem;
-}
-
-.search-history h3 {
-    font-size: 0.9rem;
-    color: #e6b800;
-    margin-bottom: 0.5rem;
-    padding: 0 0.5rem;
-}
-
-.history-item {
-    display: block;
-    width: 100%;
-    padding: 0.5rem 1rem;
-    margin: 0.2rem 0;
-    background: transparent;
-    color: #e0e0e0;
-    border: none;
-    border-radius: 5px;
-    text-align: left;
-    cursor: pointer;
-    transition: background 0.3s ease;
-}
-
-.history-item:hover {
-    background: #3a3a6e;
-}
-
-/* Analyzed count styling */
-.analyzed-count {
-    text-align: center;
-    font-size: 0.9rem;
-    color: #b0b0b0;
-    margin: 1rem 0;
-    background: rgba(255, 255, 255, 0.1);
-    padding: 0.5rem 1rem;
-    border-radius: 10px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-/* Filters styling */
 .filters {
     display: flex;
     justify-content: center;
@@ -170,14 +100,18 @@ button:active {
     background: #2a2a4e;
     color: #e0e0e0;
     cursor: pointer;
-    transition: background 0.3s ease;
 }
 
-.filters select:hover {
-    background: #3a3a6e;
+.analyzed-count {
+    text-align: center;
+    font-size: 0.9rem;
+    color: #b0b0b0;
+    margin: 1rem 0;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
 }
 
-/* Tabs styling */
 .tabs {
     display: flex;
     justify-content: center;
@@ -192,20 +126,13 @@ button:active {
     border: none;
     border-radius: 10px;
     cursor: pointer;
-    transition: background 0.3s ease, transform 0.1s ease;
-}
-
-.tab:hover {
-    background: #3a3a6e;
 }
 
 .tab.active {
     background: #e6b800;
     color: #1a1a2e;
-    transform: scale(1.05);
 }
 
-/* Video grid layout */
 .video-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -213,19 +140,10 @@ button:active {
     margin-bottom: 1rem;
 }
 
-/* Video card styling */
 .video-card {
     background: #2a2a4e;
     border-radius: 15px;
     overflow: hidden;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-    animation: fadeIn 0.5s ease-in-out;
-}
-
-.video-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
 }
 
 .video-card a {
@@ -248,7 +166,6 @@ button:active {
     font-size: 1rem;
     margin-bottom: 0.4rem;
     color: #e0e0e0;
-    line-height: 1.4;
 }
 
 .video-info p {
@@ -258,14 +175,6 @@ button:active {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 0.3rem 0.6rem;
-    border-radius: 5px;
-    transition: background 0.3s ease;
-}
-
-.video-info p:hover {
-    background: rgba(255, 255, 255, 0.1);
 }
 
 .video-info .description {
@@ -273,11 +182,8 @@ button:active {
     color: #888;
     margin-top: 0.4rem;
     font-style: italic;
-    background: none;
-    padding: 0;
 }
 
-/* Load more button */
 .load-more {
     display: block;
     margin: 1rem auto;
@@ -287,14 +193,12 @@ button:active {
     border: none;
     border-radius: 25px;
     cursor: pointer;
-    transition: background 0.3s ease;
 }
 
 .load-more:hover {
     background: linear-gradient(135deg, #b38f00, #e6b800);
 }
 
-/* Loading spinner */
 .loader {
     border: 4px solid #3a3a6e;
     border-top: 4px solid #e6b800;
@@ -310,12 +214,6 @@ button:active {
     100% { transform: rotate(360deg); }
 }
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Error message styling */
 .error {
     color: #e63946;
     font-size: 0.9rem;
@@ -324,74 +222,4 @@ button:active {
     border-radius: 5px;
     margin-top: 1rem;
     text-align: center;
-}
-
-/* Responsive design */
-@media (max-width: 600px) {
-    header h1 {
-        font-size: 1.6rem;
-    }
-
-    header p {
-        font-size: 0.8rem;
-    }
-
-    form {
-        flex-direction: column;
-        align-items: center;
-    }
-
-    input[type="text"] {
-        max-width: 100%;
-    }
-
-    button {
-        width: 100%;
-        max-width: 150px;
-    }
-
-    .search-history {
-        width: 100%;
-        max-width: 100%;
-    }
-
-    .filters {
-        flex-direction: column;
-        gap: 0.4rem;
-    }
-
-    .tabs {
-        flex-direction: row;
-        gap: 0.4rem;
-        flex-wrap: wrap;
-        justify-content: center;
-    }
-
-    .video-card img {
-        height: 140px;
-    }
-
-    .video-info h3 {
-        font-size: 0.9rem;
-    }
-}
-.video-thumbnail {
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    object-fit: cover;
-}
-.tab {
-    padding: 10px;
-    cursor: pointer;
-}
-.tab.active {
-    background-color: #ddd;
-}
-.video-grid {
-    display: grid;
-    gap: 20px;
-}
-.load-more {
-    margin-top: 20px;
-    padding: 10px;
 }
