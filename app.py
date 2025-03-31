@@ -110,6 +110,66 @@ def sentiment_analysis():
 
     return jsonify({"sentiment": sentiment_score})
 
+@app.route('/video_info', methods=['GET'])
+def get_video_info():
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({"error": "Missing video_id parameter"}), 400
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        return jsonify({"error": "Failed to fetch video data"}), 500
+
+    data = extract_yt_initial_data(response.text)
+    if not data:
+        return jsonify({"error": "Failed to extract video data"}), 500
+
+    try:
+        video_details = data['videoDetails']
+        return jsonify({
+            "title": video_details.get('title', 'Unknown'),
+            "views": video_details.get('viewCount', 'Unknown'),
+            "likes": video_details.get('likes', 'Unknown'),
+            "description": video_details.get('shortDescription', 'Unknown'),
+            "channel": video_details.get('author', 'Unknown'),
+        })
+    except Exception as e:
+        return jsonify({"error": f"Error extracting video details: {str(e)}"}), 500
+
+@app.route('/comments', methods=['GET'])
+def get_comments():
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({"error": "Missing video_id parameter"}), 400
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        return jsonify({"error": "Failed to fetch comments"}), 500
+
+    data = extract_yt_initial_data(response.text)
+    if not data:
+        return jsonify({"error": "Failed to extract comment data"}), 500
+
+    comments = []
+    try:
+        comment_section = data['contents']['twoColumnWatchNextResults']['results']['results']['contents']
+        for item in comment_section:
+            if 'commentThreadRenderer' in item:
+                comment = item['commentThreadRenderer']['comment']['commentRenderer']
+                comments.append({
+                    "author": comment.get('authorText', {}).get('simpleText', 'Unknown'),
+                    "text": comment.get('contentText', {}).get('simpleText', 'Unknown'),
+                    "likes": comment.get('voteCount', {}).get('simpleText', '0'),
+                })
+    except Exception as e:
+        return jsonify({"error": f"Error extracting comments: {str(e)}"}), 500
+
+    return jsonify({"comments": comments})
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
