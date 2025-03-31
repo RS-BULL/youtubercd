@@ -1,4 +1,4 @@
-const backendUrl = 'https://your-app-name.up.railway.app'; // Replace with your Railway URL
+const backendUrl = 'https://youtubercd-production.up.railway.app/'; // Replace with your Railway URL
 const VIDEOS_PER_LOAD = 2;
 let allVideos = { short: [], long: [] };
 let currentTab = 'short';
